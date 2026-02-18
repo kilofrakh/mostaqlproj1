@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>مُدرِّسي — مُعلّمك العربي الذكي</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+  <!-- ═══ Header ═══════════════════════════════════════════════════════════ -->
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="brand">
+        <span class="brand-icon">🎓</span>
+        <div>
+          <h1 class="brand-title">مُدرِّسي</h1>
+          <p class="brand-subtitle">معلّمك العربي الذكي</p>
+        </div>
+      </div>
+      <div class="header-badge">
+        <span class="pulse-dot"></span>
+        <span>مدعوم بالذكاء الاصطناعي</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ═══ Main ══════════════════════════════════════════════════════════════ -->
+  <main class="main-container">
+
+    <!-- Instruction card -->
+    <section class="intro-card">
+      <div class="steps-row">
+        <div class="step"><span class="step-num">١</span><span>اضغط زر التسجيل</span></div>
+        <div class="step-arrow">←</div>
+        <div class="step"><span class="step-num">٢</span><span>تحدّث بالعربية</span></div>
+        <div class="step-arrow">←</div>
+        <div class="step"><span class="step-num">٣</span><span>احصل على التصحيح</span></div>
+        <div class="step-arrow">←</div>
+        <div class="step"><span class="step-num">٤</span><span>واصل المحادثة</span></div>
+      </div>
+    </section>
+
+    <!-- Mic recorder card -->
+    <section class="recorder-card">
+      <div class="mic-ring" id="micRing">
+        <button class="mic-btn" id="micBtn" title="اضغط للتسجيل">
+          <svg class="mic-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <line x1="12" y1="19" x2="12" y2="23"/>
+            <line x1="8" y1="23" x2="16" y2="23"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="recorder-status" id="recorderStatus">اضغط للبدء</div>
+
+      <div class="timer-row" id="timerRow" style="display:none;">
+        <span class="rec-indicator"></span>
+        <span id="timerDisplay">00:00</span>
+      </div>
+
+      <div class="btn-row" id="btnRow" style="display:none;">
+        <button class="btn btn-send" id="sendBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          إرسال للتحليل
+        </button>
+        <button class="btn btn-cancel" id="cancelBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          إلغاء
+        </button>
+      </div>
+    </section>
+
+    <!-- Loading spinner -->
+    <div class="loading-overlay" id="loadingOverlay" style="display:none;">
+      <div class="spinner-card">
+        <div class="spinner"></div>
+        <p class="spinner-text">جارٍ التحليل والتصحيح…</p>
+        <div class="loading-steps">
+          <span class="ls" id="ls1">🎙️ تحويل الصوت إلى نص</span>
+          <span class="ls" id="ls2">🧠 تحليل النحو</span>
+          <span class="ls" id="ls3">💬 توليد الرد</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Error banner -->
+    <div class="error-banner" id="errorBanner" style="display:none;">
+      <span class="error-icon">⚠️</span>
+      <span id="errorText"></span>
+      <button class="error-close" id="errorClose">×</button>
+    </div>
+
+    <!-- Results section -->
+    <section class="results-section" id="resultsSection" style="display:none;">
+
+      <div class="results-header">
+        <h2 class="results-title">نتائج التحليل</h2>
+        <div class="accuracy-badge" id="accuracyBadge"></div>
+      </div>
+
+      <div class="cards-grid">
+
+        <!-- Original -->
+        <div class="result-card card-original" data-label="ما قلته">
+          <div class="card-header">
+            <span class="card-icon">🗣️</span>
+            <span class="card-title">ما قلته</span>
+          </div>
+          <p class="card-content arabic-text" id="originalText"></p>
+        </div>
+
+        <!-- Corrected -->
+        <div class="result-card card-corrected" id="correctedCard" data-label="التصحيح">
+          <div class="card-header">
+            <span class="card-icon" id="correctedIcon">✅</span>
+            <span class="card-title" id="correctedTitle">الجملة الصحيحة</span>
+          </div>
+          <p class="card-content arabic-text" id="correctedText"></p>
+        </div>
+
+        <!-- Explanation -->
+        <div class="result-card card-explanation" id="explanationCard" data-label="الشرح">
+          <div class="card-header">
+            <span class="card-icon">📚</span>
+            <span class="card-title">الشرح</span>
+          </div>
+          <p class="card-content arabic-text" id="explanationText"></p>
+        </div>
+
+        <!-- Improved -->
+        <div class="result-card card-improved" data-label="نسخة محسّنة">
+          <div class="card-header">
+            <span class="card-icon">✨</span>
+            <span class="card-title">نسخة أكثر أسلوبية</span>
+          </div>
+          <p class="card-content arabic-text" id="improvedText"></p>
+        </div>
+
+      </div>
+
+      <!-- Follow-up question + audio -->
+      <div class="followup-card">
+        <div class="followup-inner">
+          <div class="followup-icon">💬</div>
+          <div class="followup-body">
+            <p class="followup-label">سؤال المتابعة</p>
+            <p class="arabic-text followup-question" id="followupText"></p>
+          </div>
+        </div>
+        <div class="audio-row" id="audioRow" style="display:none;">
+          <button class="play-btn" id="playBtn">
+            <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            استمع للرد
+          </button>
+          <audio id="audioPlayer"></audio>
+          <div class="audio-waveform" id="waveform">
+            <span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Record again CTA -->
+      <div class="again-row">
+        <button class="btn btn-again" id="againBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          سجّل رداً جديداً
+        </button>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- ═══ Footer ════════════════════════════════════════════════════════════ -->
+  <footer class="site-footer">
+    <p>مُدرِّسي · مُعلّمك العربي الذكي · مدعوم بـ Whisper & Claude & gTTS</p>
+  </footer>
+
+  <script src="/static/script.js"></script>
+</body>
+</html>
