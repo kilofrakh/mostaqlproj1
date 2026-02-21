@@ -1,6 +1,0 @@
-flask>=3.0.0
-groq>=0.9.0
-openai-whisper>=20231117
-gTTS>=2.5.1
-python-dotenv>=1.0.0
-# ffmpeg must be installed separately (see README)
