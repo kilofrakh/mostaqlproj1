@@ -1,0 +1,16 @@
+[phases.setup]
+nixPkgs = [
+  "ffmpeg",
+  "pkg-config",
+  "libav",
+  "libavcodec",
+  "libavformat",
+  "libavdevice",
+  "libavutil",
+  "libavfilter",
+  "libswscale",
+  "libswresample"
+]
+
+[start]
+cmd = "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
