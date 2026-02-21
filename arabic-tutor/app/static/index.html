@@ -1,61 +1,0 @@
-<!doctype html>
-<html lang="ar" dir="rtl">
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>المحادثة العربية — المُعلِّمة</title>
-  <link rel="stylesheet" href="/static/styles.css"/>
-</head>
-
-<body>
-  <div class="wrap">
-    <aside class="sidebar">
-      <h2>معهد اللغة العربية</h2>
-
-      <div class="card">
-        <h3>🎙️ الصوت والشخصية</h3>
-        <label>اختر الصوت</label>
-        <select id="voiceSelect"></select>
-        <div class="hint" id="personaHint"></div>
-      </div>
-
-      <div class="card">
-        <h3>✅ الحالة</h3>
-        <div id="status"></div>
-      </div>
-
-      <button id="newChatBtn" class="btn secondary">بدء محادثة جديدة</button>
-    </aside>
-
-    <main class="main">
-      <header class="hero">
-        <div class="heroText">
-          <h1 id="titleName">نور — مُعلِّمة اللغة العربية</h1>
-          <p>تحدّث بالعربية، وسأردّ عليك فوراً مع صوت مباشر (بدون زر تشغيل).</p>
-        </div>
-        <div class="avatar">👩‍🏫</div>
-      </header>
-
-      <section class="chat" id="chat"></section>
-
-      <section class="record">
-        <div class="recordTop">
-          <div class="recTitle">🎤 سجّل صوتك</div>
-          <div class="recState" id="recState">جاهز</div>
-        </div>
-
-        <div class="row">
-          <button id="recBtn" class="btn">ابدأ التسجيل</button>
-          <button id="stopBtn" class="btn danger" disabled>إيقاف</button>
-        </div>
-
-        <div class="hint">
-          اضغط “ابدأ التسجيل”، تكلّم، ثم اضغط “إيقاف” — سيُرسل الصوت للتفريغ ثم الرد ثم تشغيل صوت المُعلِّمة تلقائياً.
-        </div>
-      </section>
-    </main>
-  </div>
-
-  <script src="/static/app.js"></script>
-</body>
-</html>
