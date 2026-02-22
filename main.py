@@ -1,56 +1,50 @@
 import os
 import json
-import tempfile
-import subprocess
 from pathlib import Path
 from typing import List, Dict, Optional
 
+import httpx
 from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from groq import Groq
 from elevenlabs import ElevenLabs
-import httpx
 
+# -----------------------------------------------------------------------------
+# Config (ENV vars in Railway Variables)
+# -----------------------------------------------------------------------------
 DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "").strip()
-# -----------------------------------------------------------------------------
-# Config (ENV vars on HF Spaces -> Settings -> Variables / Secrets)
-# -----------------------------------------------------------------------------
+DEEPGRAM_MODEL = os.environ.get("DEEPGRAM_MODEL", "nova-2").strip()
+DEEPGRAM_LANGUAGE = os.environ.get("DEEPGRAM_LANGUAGE", "ar").strip()
+
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "").strip()
 
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
-WHISPER_MODEL_NAME = os.environ.get("WHISPER_MODEL", "small")  # small/base/medium
-WHISPER_DEVICE = os.environ.get("WHISPER_DEVICE", "cpu")
-WHISPER_COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "int8")
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
 
-# This is the ElevenLabs output format we stream to the browser
-# mp3_44100_128 is widely compatible with MSE.
-ELEVEN_OUTPUT_FORMAT = os.environ.get("ELEVEN_OUTPUT_FORMAT", "mp3_44100_128")
-ELEVEN_MODEL_ID = os.environ.get("ELEVEN_MODEL_ID", "eleven_multilingual_v2")
+# ElevenLabs streaming output format (good for MediaSource in browser)
+ELEVEN_OUTPUT_FORMAT = os.environ.get("ELEVEN_OUTPUT_FORMAT", "mp3_44100_128").strip()
+ELEVEN_MODEL_ID = os.environ.get("ELEVEN_MODEL_ID", "eleven_multilingual_v2").strip()
 
 # -----------------------------------------------------------------------------
-# App
+# App + Static
 # -----------------------------------------------------------------------------
 app = FastAPI()
 
-# Serve static frontend
-app.mount("/static", StaticFiles(directory="static"), name="static")
+BASE_DIR = Path(__file__).resolve().parent.parent
+STATIC_DIR = BASE_DIR / "static"
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # -----------------------------------------------------------------------------
-# Global models/clients (production: load once)
+# Clients
 # -----------------------------------------------------------------------------
-whisper = WhisperModel(
-    WHISPER_MODEL_NAME,
-    device=WHISPER_DEVICE,
-    compute_type=WHISPER_COMPUTE_TYPE,
-)
-
 groq_client: Optional[Groq] = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 eleven_client: Optional[ElevenLabs] = ElevenLabs(api_key=ELEVENLABS_API_KEY) if ELEVENLABS_API_KEY else None
 
-
+# -----------------------------------------------------------------------------
+# Prompt
+# -----------------------------------------------------------------------------
 SYSTEM_PROMPT_TEMPLATE = """أنت مُعلِّمة لغة عربية متخصصة اسمك "{tutor_name}"، تعمل في معهد اللغة العربية.
 مهمتك:
 ١. إجراء محادثة تعليمية طبيعية باللغة العربية الفصحى المعاصرة حصراً.
@@ -65,44 +59,14 @@ SYSTEM_PROMPT_TEMPLATE = """أنت مُعلِّمة لغة عربية متخصص
 - الأسلوب دافئ وصبور.
 """
 
-
 def build_system_prompt(tutor_name: str) -> str:
     return SYSTEM_PROMPT_TEMPLATE.format(tutor_name=tutor_name)
 
-
-def _ffmpeg_to_wav_16k_mono(src_path: str) -> str:
-    """
-    Convert any audio file to wav 16k mono using ffmpeg.
-    Returns path to wav file.
-    """
-    out_path = src_path + "_16k.wav"
-    subprocess.run(
-        ["ffmpeg", "-y", "-i", src_path, "-ar", "16000", "-ac", "1", out_path],
-        capture_output=True,
-        check=False,
-        timeout=60,
-    )
-    if Path(out_path).exists():
-        return out_path
-    return src_path  # fallback
-
-
-def transcribe(file_path: str) -> str:
-    segments, _ = whisper.transcribe(file_path, language="ar", beam_size=5)
-    return " ".join(s.text for s in segments).strip()
-
-
-def groq_chat_reply(
-    history: List[Dict[str, str]],
-    user_text: str,
-    tutor_name: str,
-) -> str:
+def groq_chat_reply(history: List[Dict[str, str]], user_text: str, tutor_name: str) -> str:
     if not groq_client:
         return "⚠️ لم يتم ضبط GROQ_API_KEY على الخادم."
 
-    # append user
     history.append({"role": "user", "content": user_text})
-    # keep last 20
     if len(history) > 20:
         history[:] = history[-20:]
 
@@ -122,14 +86,64 @@ def groq_chat_reply(
         history[:] = history[-20:]
     return reply
 
+# -----------------------------------------------------------------------------
+# Deepgram STT
+# -----------------------------------------------------------------------------
+def _guess_content_type(upload: UploadFile) -> str:
+    """
+    Deepgram needs correct Content-Type. Browser MediaRecorder usually sends audio/webm.
+    """
+    if upload.content_type:
+        return upload.content_type
+
+    # fallback based on filename
+    name = (upload.filename or "").lower()
+    if name.endswith(".webm"):
+        return "audio/webm"
+    if name.endswith(".ogg"):
+        return "audio/ogg"
+    if name.endswith(".wav"):
+        return "audio/wav"
+    if name.endswith(".mp3"):
+        return "audio/mpeg"
+    return "application/octet-stream"
+
+async def deepgram_transcribe(audio_bytes: bytes, content_type: str) -> str:
+    if not DEEPGRAM_API_KEY:
+        return ""
+
+    # smart_format/punctuate helps readability
+    url = (
+        "https://api.deepgram.com/v1/listen"
+        f"?model={DEEPGRAM_MODEL}"
+        f"&language={DEEPGRAM_LANGUAGE}"
+        "&smart_format=true&punctuate=true"
+    )
+
+    headers = {
+        "Authorization": f"Token {DEEPGRAM_API_KEY}",
+        "Content-Type": content_type,
+    }
+
+    async with httpx.AsyncClient(timeout=90) as client:
+        r = await client.post(url, headers=headers, content=audio_bytes)
+
+    if r.status_code != 200:
+        # Useful debug message
+        return ""
+
+    data = r.json()
+    try:
+        return (data["results"]["channels"][0]["alternatives"][0]["transcript"] or "").strip()
+    except Exception:
+        return ""
 
 # -----------------------------------------------------------------------------
 # Routes
 # -----------------------------------------------------------------------------
 @app.get("/")
 def root():
-    return FileResponse("static/index.html")
-
+    return FileResponse(str(STATIC_DIR / "index.html"))
 
 @app.get("/health")
 def health():
@@ -138,48 +152,28 @@ def health():
             "ok": True,
             "groq": bool(GROQ_API_KEY),
             "eleven": bool(ELEVENLABS_API_KEY),
-            "whisper": {
-                "model": WHISPER_MODEL_NAME,
-                "device": WHISPER_DEVICE,
-                "compute_type": WHISPER_COMPUTE_TYPE,
-            },
+            "deepgram": bool(DEEPGRAM_API_KEY),
+            "deepgram_cfg": {"model": DEEPGRAM_MODEL, "language": DEEPGRAM_LANGUAGE},
         }
     )
 
 @app.post("/stt")
 async def stt(audio: UploadFile = File(...)):
     """
-    Uses Deepgram Speech-to-Text API.
-    Accepts audio/webm from browser.
+    Deepgram Speech-to-Text.
+    Accepts audio/webm from browser MediaRecorder.
     """
-
     if not DEEPGRAM_API_KEY:
         return {"text": ""}
 
-    # Read audio bytes
     audio_bytes = await audio.read()
-
-    url = "https://api.deepgram.com/v1/listen?model=nova-2&language=ar"
-
-    headers = {
-        "Authorization": f"Token {DEEPGRAM_API_KEY}",
-        "Content-Type": "audio/webm"
-    }
-
-    async with httpx.AsyncClient(timeout=90) as client:
-        response = await client.post(url, headers=headers, content=audio_bytes)
-
-    if response.status_code != 200:
+    if not audio_bytes:
         return {"text": ""}
 
-    data = response.json()
+    content_type = _guess_content_type(audio)
+    transcript = await deepgram_transcribe(audio_bytes, content_type)
+    return {"text": transcript}
 
-    try:
-        transcript = data["results"]["channels"][0]["alternatives"][0]["transcript"]
-    except Exception:
-        transcript = ""
-
-    return {"text": transcript.strip()}
 @app.post("/chat")
 async def chat(payload: dict):
     """
@@ -201,7 +195,6 @@ async def chat(payload: dict):
     reply = groq_chat_reply(history, user_text, tutor_name)
     return {"reply": reply, "history": history}
 
-
 @app.websocket("/tts")
 async def tts_ws(ws: WebSocket):
     """
@@ -219,6 +212,7 @@ async def tts_ws(ws: WebSocket):
         while True:
             msg = await ws.receive_text()
             data = json.loads(msg)
+
             text = (data.get("text") or "").strip()
             voice_id = (data.get("voice_id") or "").strip()
 
@@ -226,7 +220,6 @@ async def tts_ws(ws: WebSocket):
                 await ws.send_text(json.dumps({"error": "missing text/voice_id"}))
                 continue
 
-            # Stream MP3 chunks from ElevenLabs and forward to browser
             try:
                 audio_stream = eleven_client.text_to_speech.stream(
                     voice_id=voice_id,
@@ -235,10 +228,8 @@ async def tts_ws(ws: WebSocket):
                     output_format=ELEVEN_OUTPUT_FORMAT,
                 )
                 for chunk in audio_stream:
-                    # chunk is bytes
                     await ws.send_bytes(chunk)
 
-                # signal end of stream for this utterance
                 await ws.send_text(json.dumps({"event": "end"}))
 
             except Exception as e:
