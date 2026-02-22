@@ -15,7 +15,7 @@ from elevenlabs import ElevenLabs
 # Config (ENV vars in Railway Variables)
 # -----------------------------------------------------------------------------
 DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "").strip()
-DEEPGRAM_MODEL = os.environ.get("DEEPGRAM_MODEL", "nova-2").strip()
+DEEPGRAM_MODEL = os.environ.get("DEEPGRAM_MODEL", "general").strip()
 DEEPGRAM_LANGUAGE = os.environ.get("DEEPGRAM_LANGUAGE", "ar").strip()
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()
