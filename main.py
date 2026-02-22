@@ -9,8 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from groq import Groq
-from elevenlabs import ElevenLabs
-
+from elevenlabs.client import ElevenLabs
 # -----------------------------------------------------------------------------
 # Config (ENV vars in Railway Variables)
 # -----------------------------------------------------------------------------
@@ -232,8 +231,8 @@ async def tts_ws(ws: WebSocket):
                     output_format=ELEVEN_OUTPUT_FORMAT,
                 )
                 for chunk in audio_stream:
-                    await ws.send_bytes(chunk)
-
+                    if isinstance(chunk, bytes):
+                        await ws.send_bytes(chunk)
                 await ws.send_text(json.dumps({"event": "end"}))
 
             except Exception as e:
