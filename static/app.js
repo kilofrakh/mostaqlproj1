@@ -14,7 +14,6 @@ const VOICES = [
 let history = []; // [{role, content}]
 let mediaRecorder = null;
 let chunks = [];
-
 let selected = VOICES[0];
 
 // ------------------------------
@@ -37,7 +36,7 @@ function addMessage(kind, meta, text) {
   const div = document.createElement("div");
   div.className = `msg ${kind}`;
   div.innerHTML = `
-    <div class="meta">${meta}</div>
+    <div class="meta">${escapeHtml(meta)}</div>
     <div class="text">${escapeHtml(text)}</div>
   `;
   chatEl.appendChild(div);
@@ -66,7 +65,8 @@ async function loadHealth() {
     statusEl.innerHTML = `
       <span class="badge ${j.groq ? "ok":"no"}">${j.groq ? "✅":"❌"} Groq</span>
       <span class="badge ${j.eleven ? "ok":"no"}">${j.eleven ? "✅":"❌"} ElevenLabs</span>
-      <div class="hint">Whisper: ${j.whisper.model} (${j.whisper.device})</div>
+      <span class="badge ${j.deepgram ? "ok":"no"}">${j.deepgram ? "✅":"❌"} Deepgram</span>
+      ${j.deepgram_cfg ? `<div class="hint">STT: ${j.deepgram_cfg.model} (${j.deepgram_cfg.language})</div>` : ""}
     `;
   } catch {
     statusEl.innerHTML = `<span class="badge no">❌ health</span>`;
@@ -74,9 +74,8 @@ async function loadHealth() {
 }
 
 // ------------------------------
-// TTS Streaming player via MediaSource (no audio player UI)
+// TTS Streaming (MediaSource) — no audio player UI
 // ------------------------------
-let ttsSocket = null;
 let audioEl = null;
 let mediaSource = null;
 let sourceBuffer = null;
@@ -95,15 +94,17 @@ function ensureAudioPipeline() {
 
 function resetMediaSource() {
   ensureAudioPipeline();
+
   queue = [];
   streaming = true;
+  sourceBuffer = null;
 
   mediaSource = new MediaSource();
   audioEl.src = URL.createObjectURL(mediaSource);
 
   mediaSource.addEventListener("sourceopen", () => {
     // mp3 mime for MSE
-    sourceBuffer = mediaSource.addSourceBuffer('audio/mpeg');
+    sourceBuffer = mediaSource.addSourceBuffer("audio/mpeg");
     sourceBuffer.mode = "sequence";
 
     sourceBuffer.addEventListener("updateend", () => {
@@ -114,35 +115,45 @@ function resetMediaSource() {
       }
     });
 
-    // kick off queued buffers
     if (queue.length > 0 && !sourceBuffer.updating) {
       sourceBuffer.appendBuffer(queue.shift());
     }
   });
 }
 
-function appendMp3Chunk(chunk) {
+function appendMp3Chunk(uint8) {
   if (!sourceBuffer || sourceBuffer.updating) {
-    queue.push(chunk);
+    queue.push(uint8);
     return;
   }
-  sourceBuffer.appendBuffer(chunk);
+  sourceBuffer.appendBuffer(uint8);
+}
+
+function endStream() {
+  streaming = false;
+  if (mediaSource && mediaSource.readyState === "open" && sourceBuffer && !sourceBuffer.updating && queue.length === 0) {
+    try { mediaSource.endOfStream(); } catch {}
+  }
 }
 
 // ------------------------------
-// Connect TTS websocket
+// WebSocket /tts (auto-reconnect)
 // ------------------------------
 let ttsSocket = null;
 let ttsConnecting = false;
 
+function wsUrl(path) {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  return `${proto}://${location.host}${path}`;
+}
+
 function connectTTS() {
-  if (ttsSocket && (ttsSocket.readyState === 0 || ttsSocket.readyState === 1)) return;
+  if (ttsSocket && (ttsSocket.readyState === WebSocket.OPEN || ttsSocket.readyState === WebSocket.CONNECTING)) return;
   if (ttsConnecting) return;
 
   ttsConnecting = true;
 
-  const proto = location.protocol === "https:" ? "wss" : "ws";
-  ttsSocket = new WebSocket(`${proto}://${location.host}/tts`);
+  ttsSocket = new WebSocket(wsUrl("/tts"));
   ttsSocket.binaryType = "arraybuffer";
 
   ttsSocket.onopen = () => {
@@ -151,7 +162,7 @@ function connectTTS() {
 
   ttsSocket.onclose = () => {
     ttsConnecting = false;
-    // ✅ auto reconnect after a short delay
+    // reconnect
     setTimeout(connectTTS, 800);
   };
 
@@ -160,12 +171,32 @@ function connectTTS() {
   };
 
   ttsSocket.onmessage = (evt) => {
-    // your existing onmessage handler...
+    // If server sends JSON events (end/error)
+    if (typeof evt.data === "string") {
+      try {
+        const j = JSON.parse(evt.data);
+        if (j.event === "end") endStream();
+        if (j.error) addMessage("ai", "خطأ", j.error);
+      } catch {}
+      return;
+    }
+
+    // Binary audio chunk
+    const chunk = new Uint8Array(evt.data);
+    appendMp3Chunk(chunk);
   };
 }
 
-  ttsSocket.onclose = () => {};
-  ttsSocket.onerror = () => {};
+function waitForSocketOpen(timeoutMs = 4000) {
+  return new Promise((resolve, reject) => {
+    const start = Date.now();
+    const tick = () => {
+      if (ttsSocket && ttsSocket.readyState === WebSocket.OPEN) return resolve();
+      if (Date.now() - start > timeoutMs) return reject(new Error("TTS socket timeout"));
+      setTimeout(tick, 50);
+    };
+    tick();
+  });
 }
 
 // Send text to TTS stream and autoplay
@@ -173,14 +204,15 @@ async function speak(text) {
   connectTTS();
   resetMediaSource();
 
-  // (Important) browsers often allow autoplay only after a user gesture.
-  // Recording/Stop counts as a gesture so autoplay typically works.
-  audioEl.play().catch(() => { /* ignore */ });
+  // Attempt autoplay (usually allowed after record/stop gesture)
+  try { await audioEl.play(); } catch {}
 
-  ttsSocket.send(JSON.stringify({
-    text,
-    voice_id: selected.voice_id
-  }));
+  try {
+    await waitForSocketOpen();
+    ttsSocket.send(JSON.stringify({ text, voice_id: selected.voice_id }));
+  } catch (e) {
+    addMessage("ai", "خطأ", "تعذّر تشغيل الصوت (WebSocket).");
+  }
 }
 
 // ------------------------------
@@ -190,16 +222,15 @@ async function startRecording() {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   chunks = [];
 
+  // Some browsers might prefer audio/webm; fallback handled by server.
   mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
 
   mediaRecorder.ondataavailable = (e) => {
-    if (e.data.size > 0) chunks.push(e.data);
+    if (e.data && e.data.size > 0) chunks.push(e.data);
   };
 
   mediaRecorder.onstop = async () => {
-    // stop tracks
-    stream.getTracks().forEach(t => t.stop());
-
+    stream.getTracks().forEach((t) => t.stop());
     const blob = new Blob(chunks, { type: "audio/webm" });
     await handleAudio(blob);
   };
@@ -230,7 +261,7 @@ async function handleAudio(blob) {
     const r = await fetch("/stt", { method: "POST", body: fd });
     const j = await r.json();
     transcript = (j.text || "").trim();
-  } catch (e) {
+  } catch {
     addMessage("ai", "خطأ", "فشل التفريغ.");
     recState.textContent = "جاهز";
     recBtn.disabled = false;
@@ -298,11 +329,15 @@ function initVoices() {
     selected = VOICES[Number(voiceSelect.value)];
     setTutorUI();
 
-    // production UX: changing voice resets session (fix duplicates, cache, etc.)
+    // Reset session on voice change (production UX)
     history = [];
     chatEl.innerHTML = "";
-    addMessage("ai", selected.tutor_name, `أهلاً وسهلاً! أنا ${selected.tutor_name}. ما الموضوع الذي تريد أن نتحدث عنه اليوم؟`);
-    speak(`أهلاً وسهلاً! أنا ${selected.tutor_name}. ما الموضوع الذي تريد أن نتحدث عنه اليوم؟`);
+
+    const greeting = `أهلاً وسهلاً! أنا ${selected.tutor_name}. ما الموضوع الذي تريد أن نتحدث عنه اليوم؟`;
+    addMessage("ai", selected.tutor_name, greeting);
+
+    // Autoplay may be blocked before user gesture; harmless if it fails
+    speak(greeting);
   });
 }
 
@@ -322,14 +357,17 @@ stopBtn.addEventListener("click", async () => {
 newChatBtn.addEventListener("click", () => {
   history = [];
   chatEl.innerHTML = "";
-  addMessage("ai", selected.tutor_name, `بدأنا محادثة جديدة. ما الذي تريد أن تتحدث عنه؟`);
-  speak(`بدأنا محادثة جديدة. ما الذي تريد أن تتحدث عنه؟`);
+  const msg = `بدأنا محادثة جديدة. ما الذي تريد أن تتحدث عنه؟`;
+  addMessage("ai", selected.tutor_name, msg);
+  speak(msg);
 });
 
-(async function boot(){
+(async function boot() {
   initVoices();
+  connectTTS();
   await loadHealth();
 
-  // First greeting (autoplay after user gesture might be blocked; still show text)
-  addMessage("ai", selected.tutor_name, `أهلاً وسهلاً! أنا ${selected.tutor_name}. ما الموضوع الذي تريد أن نتحدث عنه اليوم؟`);
+  // First greeting (autoplay may be blocked until first user gesture)
+  const greeting = `أهلاً وسهلاً! أنا ${selected.tutor_name}. ما الموضوع الذي تريد أن نتحدث عنه اليوم؟`;
+  addMessage("ai", selected.tutor_name, greeting);
 })();
