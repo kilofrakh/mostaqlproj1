@@ -132,35 +132,37 @@ function appendMp3Chunk(chunk) {
 // ------------------------------
 // Connect TTS websocket
 // ------------------------------
+let ttsSocket = null;
+let ttsConnecting = false;
+
 function connectTTS() {
   if (ttsSocket && (ttsSocket.readyState === 0 || ttsSocket.readyState === 1)) return;
+  if (ttsConnecting) return;
+
+  ttsConnecting = true;
 
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ttsSocket = new WebSocket(`${proto}://${location.host}/tts`);
   ttsSocket.binaryType = "arraybuffer";
 
-  ttsSocket.onmessage = (evt) => {
-    if (typeof evt.data === "string") {
-      // JSON event
-      try {
-        const j = JSON.parse(evt.data);
-        if (j.event === "end") {
-          streaming = false;
-          // if nothing is updating, close stream
-          if (mediaSource && mediaSource.readyState === "open" && sourceBuffer && !sourceBuffer.updating && queue.length === 0) {
-            try { mediaSource.endOfStream(); } catch {}
-          }
-        }
-        if (j.error) {
-          addMessage("ai", "خطأ", j.error);
-        }
-      } catch {}
-      return;
-    }
-
-    // binary chunk
-    appendMp3Chunk(new Uint8Array(evt.data));
+  ttsSocket.onopen = () => {
+    ttsConnecting = false;
   };
+
+  ttsSocket.onclose = () => {
+    ttsConnecting = false;
+    // ✅ auto reconnect after a short delay
+    setTimeout(connectTTS, 800);
+  };
+
+  ttsSocket.onerror = () => {
+    try { ttsSocket.close(); } catch {}
+  };
+
+  ttsSocket.onmessage = (evt) => {
+    // your existing onmessage handler...
+  };
+}
 
   ttsSocket.onclose = () => {};
   ttsSocket.onerror = () => {};
