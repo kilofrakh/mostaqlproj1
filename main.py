@@ -11,8 +11,9 @@ from fastapi.staticfiles import StaticFiles
 
 from groq import Groq
 from elevenlabs import ElevenLabs
-from faster_whisper import WhisperModel
+import httpx
 
+DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "").strip()
 # -----------------------------------------------------------------------------
 # Config (ENV vars on HF Spaces -> Settings -> Variables / Secrets)
 # -----------------------------------------------------------------------------
@@ -145,34 +146,40 @@ def health():
         }
     )
 
-
 @app.post("/stt")
 async def stt(audio: UploadFile = File(...)):
     """
-    Input: recorded audio blob from browser (webm/ogg/wav)
-    Output: transcript (arabic)
+    Uses Deepgram Speech-to-Text API.
+    Accepts audio/webm from browser.
     """
-    suffix = Path(audio.filename or "audio.webm").suffix or ".webm"
 
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        data = await audio.read()
-        tmp.write(data)
-        src_path = tmp.name
+    if not DEEPGRAM_API_KEY:
+        return {"text": ""}
 
-    wav_path = ""
+    # Read audio bytes
+    audio_bytes = await audio.read()
+
+    url = "https://api.deepgram.com/v1/listen?model=nova-2&language=ar"
+
+    headers = {
+        "Authorization": f"Token {DEEPGRAM_API_KEY}",
+        "Content-Type": "audio/webm"
+    }
+
+    async with httpx.AsyncClient(timeout=90) as client:
+        response = await client.post(url, headers=headers, content=audio_bytes)
+
+    if response.status_code != 200:
+        return {"text": ""}
+
+    data = response.json()
+
     try:
-        wav_path = _ffmpeg_to_wav_16k_mono(src_path)
-        text = transcribe(wav_path)
-        return {"text": text}
-    finally:
-        for p in [src_path, wav_path]:
-            if p and Path(p).exists():
-                try:
-                    Path(p).unlink()
-                except Exception:
-                    pass
+        transcript = data["results"]["channels"][0]["alternatives"][0]["transcript"]
+    except Exception:
+        transcript = ""
 
-
+    return {"text": transcript.strip()}
 @app.post("/chat")
 async def chat(payload: dict):
     """
