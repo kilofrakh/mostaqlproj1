@@ -32,9 +32,13 @@ ELEVEN_MODEL_ID = os.environ.get("ELEVEN_MODEL_ID", "eleven_multilingual_v2").st
 # -----------------------------------------------------------------------------
 app = FastAPI()
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent  # repo root
 STATIC_DIR = BASE_DIR / "static"
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+else:
+    print(f"[WARN] Static directory not found: {STATIC_DIR}")
 
 # -----------------------------------------------------------------------------
 # Clients
